@@ -1,0 +1,16 @@
+/*.fpr
+/*.log
+logs
+target/
+tmp
+.history
+dist
+/.idea
+/*.iml
+/out
+/.idea_modules
+/.classpath
+/.project
+/RUNNING_PID
+/.settings
+/.bsp

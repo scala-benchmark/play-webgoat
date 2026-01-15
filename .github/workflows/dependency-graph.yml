@@ -1,0 +1,25 @@
+name: Dependency Graph
+on:
+  push:
+    branches:
+      - 3.0.x
+
+concurrency:
+  # Only run once for latest commit per ref and cancel other (previous) runs.
+  group: dependency-graph-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # this permission is needed to submit the dependency graph
+
+jobs:
+  dependency-graph:
+    name: Submit dependencies to GitHub
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+      - uses: sbt/setup-sbt@v1
+      - uses: scalacenter/sbt-dependency-submission@v3

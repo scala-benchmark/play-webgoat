@@ -1,19 +1,31 @@
 package controllers
-
+import play.api.db.DBApi
 import javax.inject.Inject
+import anorm._
 
 import play.api.libs.streams.Accumulator
 import play.api.libs.ws.WSClient
 import play.api.mvc._
 import play.twirl.api.Html
-
+import java.io.File
 import scala.concurrent.ExecutionContext
 import scala.sys.process._
-
+import scala.io.Source
+import akka.actor.ActorSystem
+import akka.serialization.SerializationExtension
+import java.util.Base64
+import scala.reflect.runtime.universe
+import scala.tools.reflect.ToolBox
+import org.mvel2.MVEL
+import org.springframework.expression.spel.standard.SpelExpressionParser
+import org.springframework.expression.Expression
+import org.springframework.ldap.core.LdapTemplate
+import org.springframework.ldap.query.LdapQuery
+import org.springframework.ldap.query.LdapQueryBuilder
 /**
  * A controller full of vulnerabilities.
  */
-class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(implicit ec: ExecutionContext) extends MessagesAbstractController(cc) {
+class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, dbapi: DBApi)(implicit ec: ExecutionContext) extends MessagesAbstractController(cc) {
 
   def index: Action[AnyContent] = Action { implicit request  =>
      Ok(Html(s"""
@@ -30,8 +42,11 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(i
              <li><a href="${routes.HomeController.attackerFormInput}">attackerFormInput</a></li>
              <li><a href="${routes.HomeController.attackerFlash}">attackerFlash</a></li>
              <li><a href="${routes.HomeController.constraintForm}">constraintForm</a></li>
-             <li><a href="${routes.HomeController.attackerSSRF}">attackerSSRF</a></li>
-             <li><a href="${routes.HomeController.attackerCustomBodyParser}">attackerCustomBodyParser</a></li>
+            <li><a href="${routes.HomeController.attackerSSRF}">attackerSSRF</a></li>
+            <li><a href="${routes.HomeController.attackerCustomBodyParser}">attackerCustomBodyParser</a></li>
+            <li><a href="${routes.HomeController.attackerCommandInjection}">attackerCommandInjection</a></li>
+            <li><a href="${routes.HomeController.attackerXSS}">attackerXSS</a></li>
+            <li><a href="${routes.HomeController.attackerMVEL}">attackerMVEL</a></li>
            </ul>
          </body>
        </html>
@@ -40,12 +55,46 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(i
 
   /**
    * Command injection & XSS directly from directly called query parameter
+   * Also includes CWE-90: LDAP Injection
    */
   def attackerQuerySimple: Action[AnyContent] = Action { implicit request  =>
-    val address = request.getQueryString("address")
+    //CWE-89
+    //SOURCE
+    val query = request.getQueryString("query").getOrElse("")
 
+    val sqlQuery = s"SELECT * FROM hosts WHERE address = '$query'"
+
+    dbapi.database("default").withConnection { implicit conn =>
+      //SINK
+      anorm.SQL(sqlQuery).execute()
+    }
+
+    val address = request.getQueryString("address")
     // [RuleTest] Command Injection 
     s"ping ${address}".!
+
+    //CWE-90
+    //SOURCE
+    val ldapFilter = request.getQueryString("ldap").getOrElse("")
+    
+    if (ldapFilter.nonEmpty) {
+      try {
+        // Create a mock LdapContext (in real scenario, this would be injected)
+        val ldapTemplate = new LdapTemplate()
+        
+        // Build LDAP query with tainted filter
+        val ldapQuery: LdapQuery = LdapQueryBuilder.query()
+          .filter(ldapFilter)
+        
+        //SINK
+        val result = ldapTemplate.findOne(ldapQuery, classOf[Object])
+        
+        Ok(s"LDAP query executed. Filter: $ldapFilter, Result: $result")
+      } catch {
+        case e: Exception =>
+          Ok(s"LDAP query error: ${e.getMessage}")
+      }
+    }
 
     // [RuleTest] Cross-Site Scripting: Reflected
     val html = Html(s"Host ${address} pinged")
@@ -72,6 +121,7 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(i
 
   /**
    * XSS directly from directly called query parameter
+   * Also includes CWE-94: Code Injection
    */
   def attackerQuery: Action[AnyContent] = Action { implicit request  =>
 
@@ -82,7 +132,33 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(i
       Ok(Html(command))
     }.getOrElse(Ok(""))
 
-    result as HTML
+    //CWE-94
+    //SOURCE
+    val codeInput = request.getQueryString("code").getOrElse("")
+    
+    if (codeInput.nonEmpty) {
+      try {
+        val mirror = universe.runtimeMirror(getClass.getClassLoader)
+        val toolbox = mirror.mkToolBox()
+        
+        //SINK
+        val codeResult = toolbox.eval(toolbox.parse(codeInput))
+        
+        Ok(s"Code executed: $codeResult")
+      } catch {
+        case e: Exception => 
+          Ok(s"Code execution error: ${e.getMessage}")
+      }
+    } else {
+      val result = request.getQueryString("attacker").map { command =>
+        // Render the command directly from query parameter, this is the obvious example
+        // User thinks this is system controlled and validated, so turns it into HTML
+        // and unescapes it, resulting in XSS.
+        Ok(Html(command))
+      }.getOrElse(Ok(""))
+
+      result as HTML
+    }
   }
 
   /**
@@ -196,6 +272,7 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(i
 
   /**
    * SSRF attacks done with Play WS
+   * Also includes CWE-502: Deserialization of untrusted data
    */
   def attackerSSRF: Action[AnyContent] = Action.async { implicit request  =>
     // Play WS does not have a whitelist of valid URLs, so if you're calling it
@@ -205,9 +282,42 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(i
 
     val attackerUrl = request.body.asText.getOrElse("http://google.com")
 
-    ws.url(attackerUrl).get().map { response =>
-      // For bonus points, we can pull things out of the response as well...
-      Ok(s"I called out to $attackerUrl")
+    //CWE-502
+    //SOURCE
+    val serializedData = request.getQueryString("data").getOrElse("")
+    
+    // Deserialization of untrusted data
+    if (serializedData.nonEmpty) {
+      try {
+        // Convert base64 string to bytes
+        val bytes: Array[Byte] = Base64.getDecoder.decode(serializedData)
+
+        implicit val akkaSystem: ActorSystem = ActorSystem("akka-deserialization-system")
+        
+        val serialization = SerializationExtension(akkaSystem)
+
+        //SINK
+        val result = serialization.deserialize(bytes, classOf[String])
+        
+        val response = result match {
+          case scala.util.Success(value) => Ok(s"Deserialized: $value")
+          case scala.util.Failure(e)     => Ok(s"Deserialization failed: ${e.getMessage}")
+        }
+
+        akkaSystem.terminate()
+        scala.concurrent.Future.successful(response)
+
+      } catch {
+        case e: Exception =>
+          scala.concurrent.Future.successful(
+            Ok(s"Deserialization error: ${e.getMessage}")
+          )
+      }
+    } else {
+      ws.url(attackerUrl).get().map { response =>
+        // For bonus points, we can pull things out of the response as well...
+        Ok(s"I called out to $attackerUrl")
+      }
     }
   }
 
@@ -217,15 +327,97 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents)(i
   def attackerCustomBodyParser: Action[Foo] = Action(bodyParser = BodyParser { (header: RequestHeader) => {
     // request header is a request without a body
     // http://localhost:9000/attackerCustomBodyParser?address=/etc/passwd
+    //CWE-22
+    //SOURCE
     val result = header.getQueryString("filename").map { filename =>
+      
+      val f = new File(filename)
+      
+      //SINK
+      val fileContent = Source.fromFile(f)
+      
       // [RuleTest] Command Injection
       s"cat ${filename}".!!
+    
     }.getOrElse("No filename found!")
 
     Accumulator.done(Right(Foo(bar = result)))
   }}) { implicit request: Request[Foo] =>
     val foo: Foo = request.body
     Ok(foo.bar)
+  }
+
+  /**
+   * OS Command Injection using ProcessBuilder
+   */
+  def attackerCommandInjection: Action[AnyContent] = Action { implicit request =>
+    //CWE-78
+    //SOURCE
+    val command = request.getQueryString("command").getOrElse("echo hello")
+
+    //SINK
+    val processBuilder: scala.sys.process.ProcessBuilder = scala.sys.process.Process(command)
+    val result = processBuilder.!!
+
+    Ok(s"Command executed: $result")
+  }
+
+  /**
+   * Cross-Site Scripting (XSS) using Html sink
+   */
+  def attackerXSS: Action[AnyContent] = Action { implicit request =>
+    //CWE-79
+    //SOURCE
+    val userInput = request.getQueryString("input").getOrElse("")
+
+    //SINK
+    val html: play.twirl.api.Html = Html(userInput)
+
+    Ok(html) as HTML
+  }
+
+  /**
+   * MVEL Injection using MVEL.eval
+   * Also includes SPEL Injection using Expression.getValue()
+   */
+  def attackerMVEL: Action[AnyContent] = Action { implicit request =>
+    //CWE-917 MVEL Injection
+    //SOURCE
+    val expression = request.getQueryString("expression").getOrElse("1 + 1")
+    
+    //CWE-917 SPEL Injection
+    //SOURCE
+    val spelExpression = request.getQueryString("spel").getOrElse("")
+
+    // MVEL Injection
+    if (expression.nonEmpty && spelExpression.isEmpty) {
+      try {
+        //SINK
+        val result = MVEL.eval(expression)
+
+        Ok(s"MVEL expression evaluated: $result")
+      } catch {
+        case e: Exception =>
+          Ok(s"MVEL evaluation error: ${e.getMessage}")
+      }
+    } 
+    // SPEL Injection
+    else if (spelExpression.nonEmpty) {
+      try {
+        val parser = new SpelExpressionParser()
+        val expr: Expression = parser.parseExpression(spelExpression)
+        
+        //SINK
+        val result = expr.getValue()
+
+        Ok(s"SPEL expression evaluated: $result")
+      } catch {
+        case e: Exception =>
+          Ok(s"SPEL evaluation error: ${e.getMessage}")
+      }
+    } else {
+      Ok("Please provide either 'expression' (MVEL) or 'spel' (SPEL) parameter")
+    }
   }
 
   case class Foo(bar: String)

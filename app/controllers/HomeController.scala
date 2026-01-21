@@ -355,8 +355,8 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, d
     //SOURCE
     val command = request.getQueryString("command").getOrElse("echo hello")
 
-    //SINK
     val processBuilder: scala.sys.process.ProcessBuilder = scala.sys.process.Process(command)
+    //SINK
     val result = processBuilder.!!
 
     Ok(s"Command executed: $result")

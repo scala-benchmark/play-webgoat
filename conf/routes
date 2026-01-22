@@ -31,6 +31,15 @@ GET       /attackerSSRF                                  controllers.HomeControl
 # Custom body parser attack
 GET       /attackerCustomBodyParser                      controllers.HomeController.attackerCustomBodyParser
 
+# OS Command Injection attack
+GET       /attackerCommandInjection                      controllers.HomeController.attackerCommandInjection
+
+# Cross-Site Scripting (XSS) attack
+GET       /attackerXSS                                   controllers.HomeController.attackerXSS
+
+# MVEL Injection attack
+GET       /attackerMVEL                                  controllers.HomeController.attackerMVEL
+
 # Map static resources from the /public folder to the /assets URL path
 GET        /assets/*file                                 controllers.Assets.at(path="/public", file)
 

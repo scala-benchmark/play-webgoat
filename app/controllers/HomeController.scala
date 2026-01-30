@@ -285,19 +285,19 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, d
     //CWE-502
     //SOURCE
     val serializedData = request.getQueryString("data").getOrElse("")
-    
+    val clazz = Class.forName(request.getQueryString("type").getOrElse("java.lang.String"))
     // Deserialization of untrusted data
     if (serializedData.nonEmpty) {
       try {
         // Convert base64 string to bytes
         val bytes: Array[Byte] = Base64.getDecoder.decode(serializedData)
-
+        
         implicit val akkaSystem: ActorSystem = ActorSystem("akka-deserialization-system")
         
         val serialization = SerializationExtension(akkaSystem)
 
         //SINK
-        val result = serialization.deserialize(bytes, classOf[String])
+        val result = serialization.deserialize(bytes, clazz)
         
         val response = result match {
           case scala.util.Success(value) => Ok(s"Deserialized: $value")

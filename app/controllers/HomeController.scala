@@ -381,7 +381,7 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, d
    * Also includes SPEL Injection using Expression.getValue()
    */
   def attackerMVEL: Action[AnyContent] = Action { implicit request =>
-    //CWE-917 MVEL Injection
+    //CWE-94 Code Injection
     //SOURCE
     val expression = request.getQueryString("expression").getOrElse("1 + 1")
     
@@ -389,7 +389,7 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, d
     //SOURCE
     val spelExpression = request.getQueryString("spel").getOrElse("")
 
-    // MVEL Injection
+    // Code Injection
     if (expression.nonEmpty && spelExpression.isEmpty) {
       try {
         //SINK

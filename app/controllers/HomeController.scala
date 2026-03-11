@@ -385,7 +385,7 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, d
     //SOURCE
     val expression = request.getQueryString("expression").getOrElse("1 + 1")
     
-    //CWE-917 SPEL Injection
+    //CWE-94 Code Injection
     //SOURCE
     val spelExpression = request.getQueryString("spel").getOrElse("")
 
@@ -401,7 +401,7 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, d
           Ok(s"MVEL evaluation error: ${e.getMessage}")
       }
     } 
-    // SPEL Injection
+    // Code Injection
     else if (spelExpression.nonEmpty) {
       try {
         val parser = new SpelExpressionParser()

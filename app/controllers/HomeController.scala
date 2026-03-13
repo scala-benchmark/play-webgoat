@@ -369,12 +369,12 @@ class HomeController @Inject()(ws: WSClient, cc: MessagesControllerComponents, d
     //CWE-79
     //SOURCE
     val userInput = request.getQueryString("input").getOrElse("")
-
-    //SINK
     val html: play.twirl.api.Html = Html(userInput)
-
+    //SINK
     Ok(html) as HTML
   }
+
+
 
   /**
    * MVEL Injection using MVEL.eval
